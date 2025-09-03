@@ -1,0 +1,15 @@
+sort_tracker_node:
+  ros__parameters:
+    # ROS parameters for the FCOS object detection node
+    image_input_topic: "kitti/camera/color/left/image_raw"
+    detection_input_topic: "fcos_object_detection/detection_array"
+    tracking_output_topic: "sort_tracker/image"
+    queue_size: 10  # QoS parameter
+    sync_queue_size: 10  # size for data queue
+    processing_frequency: 50.0  # Hz
+    max_processing_queue_size: 5  # Maximum number of queue
+
+    # sort backend parameters
+    max_age: 1
+    min_hits: 3
+    iou_threshold: 0.3
