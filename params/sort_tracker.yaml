@@ -13,3 +13,6 @@ sort_tracker_node:
     max_age: 5  # default is 1 in the paper for CV model
     min_hits: 3
     iou_threshold: 0.3
+
+    # Detection confidence filtering
+    detection_confidence_threshold: 0.5  # Range: 0.0-1.0, filter detections below this confidence

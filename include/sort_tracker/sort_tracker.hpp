@@ -141,10 +141,13 @@ private:
   int max_processing_queue_size_;
   int sync_queue_size_;
 
-  // SORT tracker parameters
+  // SORT backend parameters
   int max_age_;
   int min_hits_;
   float iou_threshold_;
+
+  // Detection confidence threshold parameter
+  float detection_confidence_threshold_;
 
   // Synchronized data buffer
   std::queue<SyncedData> sync_buff_;

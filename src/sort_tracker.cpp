@@ -81,6 +81,15 @@ bool SortTracker::initialize_parameters()
       return false;
     }
 
+    // Detection confidence threshold parameter
+    detection_confidence_threshold_ = declare_parameter<float>("detection_confidence_threshold", 0.5f);
+    if (detection_confidence_threshold_ < 0.0f || detection_confidence_threshold_ > 1.0f) {
+      RCLCPP_ERROR(get_logger(), 
+        "Invalid detection confidence threshold: %.3f (should be 0.0 <= threshold <= 1.0)",
+        detection_confidence_threshold_);
+      return false;
+    }
+
     // SORT tracker parameters
     max_age_ = declare_parameter<int>("max_age", 30);
     min_hits_ = declare_parameter<int>("min_hits", 3);
@@ -102,6 +111,7 @@ bool SortTracker::initialize_parameters()
     RCLCPP_INFO(get_logger(), "Input topics: %s, %s",
       image_input_topic_.c_str(), detection_input_topic_.c_str());
     RCLCPP_INFO(get_logger(), "Output topic: %s", tracking_output_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "Detection confidence threshold: %.3f", detection_confidence_threshold_);
     RCLCPP_INFO(get_logger(), "SORT config: max_age=%d, min_hits=%d, iou_thresh=%.3f",
       max_age_, min_hits_, iou_threshold_);
 
@@ -297,37 +307,77 @@ Eigen::MatrixXf SortTracker::convert_detections_to_sort_format(
     return Eigen::MatrixXf::Zero(0, 5);
   }
 
-  // Create matrix for SORT input: [x1, y1, x2, y2, score]
-  Eigen::MatrixXf detection_matrix(detections.size(), 5);
+  // First pass: count detections that meet confidence threshold
+  size_t valid_detection_count = 0;
 
   for (size_t i = 0; i < detections.size(); ++i) {
     const auto & detection = detections[i];
-    const auto & bbox = detection.bbox;
 
-    // Extract bounding box parameters
-    float center_x = bbox.center.position.x;
-    float center_y = bbox.center.position.y;
-    float size_x = bbox.size_x;
-    float size_y = bbox.size_y;
-
-    // Convert from center+size to corner coordinates
-    float x1 = center_x - size_x / 2.0f;
-    float y1 = center_y - size_y / 2.0f;
-    float x2 = center_x + size_x / 2.0f;
-    float y2 = center_y + size_y / 2.0f;
-
-    // Get confidence score (use first hypothesis if available)
-    float score = 1.0f; // default score
+    // Get confidence score (iterate through all hypotheses and pick the highest)
+    float score = 0.0f; // default: no confidence if no data available
     if (!detection.results.empty()) {
-      score = static_cast<float>(detection.results[0].hypothesis.score);
+      for (const auto& result : detection.results) {
+        score = std::max(score, static_cast<float>(result.hypothesis.score));
+      }
     }
 
-    // Fill matrix row
-    detection_matrix(i, 0) = x1;
-    detection_matrix(i, 1) = y1;
-    detection_matrix(i, 2) = x2;
-    detection_matrix(i, 3) = y2;
-    detection_matrix(i, 4) = score;
+    // Check if this detection meets the confidence threshold
+    if (score >= detection_confidence_threshold_) {
+      valid_detection_count++;
+    }
+  }
+
+  // Log filtering results
+  RCLCPP_DEBUG(get_logger(),
+    "Filtered detections: %ld/%ld passed confidence threshold (>= %.3f)",
+    valid_detection_count, detections.size(), detection_confidence_threshold_);
+
+  if (valid_detection_count == 0) {
+    // Return empty matrix for SORT (0 rows, 5 columns)
+    return Eigen::MatrixXf::Zero(0, 5);
+  }
+
+  // Create matrix for SORT input: [x1, y1, x2, y2, score]
+  Eigen::MatrixXf detection_matrix(valid_detection_count, 5);
+
+  // Second pass: populate matrix only with qualifying detections
+  size_t matrix_row = 0;
+  for (size_t i = 0; i < detections.size(); ++i) {
+    const auto & detection = detections[i];
+
+    // Get confidence score (iterate through all hypotheses and pick the highest)
+    float score = 0.0f; // default: no confidence if no data available
+    if (!detection.results.empty()) {
+      for (const auto& result : detection.results) {
+        score = std::max(score, static_cast<float>(result.hypothesis.score));
+      }
+    }
+
+    // Only process detections that meet the confidence threshold
+    if (score >= detection_confidence_threshold_) {
+      const auto & bbox = detection.bbox;
+
+      // Extract bounding box parameters
+      float center_x = bbox.center.position.x;
+      float center_y = bbox.center.position.y;
+      float size_x = bbox.size_x;
+      float size_y = bbox.size_y;
+
+      // Convert from center+size to corner coordinates
+      float x1 = center_x - size_x / 2.0f;
+      float y1 = center_y - size_y / 2.0f;
+      float x2 = center_x + size_x / 2.0f;
+      float y2 = center_y + size_y / 2.0f;
+
+      // Fill matrix row
+      detection_matrix(matrix_row, 0) = x1;
+      detection_matrix(matrix_row, 1) = y1;
+      detection_matrix(matrix_row, 2) = x2;
+      detection_matrix(matrix_row, 3) = y2;
+      detection_matrix(matrix_row, 4) = score;
+
+      matrix_row++;
+    }
   }
 
   return detection_matrix;
