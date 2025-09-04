@@ -15,7 +15,8 @@ find_package(sensor_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(message_filters REQUIRED)
-# find_package(sort_backend REQUIRED)  # Placeholder for your SORT backend package
+find_package(sort_backend REQUIRED)
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 add_executable(sort_tracker_node
   src/sort_tracker_node.cpp
@@ -32,7 +33,11 @@ ament_target_dependencies(sort_tracker_node PUBLIC
   vision_msgs
   cv_bridge
   message_filters
-  # sort_backend  # Uncomment when you add your SORT backend
+  sort_backend
+)
+
+target_link_libraries(sort_tracker_node PUBLIC
+  Eigen3::Eigen
 )
 
 target_compile_features(sort_tracker_node PUBLIC cxx_std_17)  # Require C++17

@@ -15,6 +15,9 @@
   <depend>vision_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>message_filters</depend>
+  <depend>sort_backend</depend>
+
+  <build_export_depend>libeigen3-dev</build_export_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
