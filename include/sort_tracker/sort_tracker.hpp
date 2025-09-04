@@ -21,7 +21,7 @@
 #include <opencv2/core.hpp>
 
 // SORT backend headers
-#include "sort_backend/sort.hpp"
+#include "sort_backend/sort_backend.hpp"
 
 
 namespace sort_tracker

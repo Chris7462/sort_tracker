@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
-project(sort_tracker)
+project(sort_tracker
+  VERSION 1.0.0
+  DESCRIPTION "Modern C++ implementation of Simple Online Realtime Tracking (SORT) using Hungarian Algorithm and Kalman Filter"
+  LANGUAGES CXX)
 
-set(CMAKE_BUILD_TYPE Release)
-
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  # Build type
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
 endif()
 
 # find dependencies
@@ -18,31 +20,34 @@ find_package(message_filters REQUIRED)
 find_package(sort_backend REQUIRED)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
-add_executable(sort_tracker_node
+add_executable(${PROJECT_NAME}_node
   src/sort_tracker_node.cpp
   src/sort_tracker.cpp)
 
-target_include_directories(sort_tracker_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+target_include_directories(${PROJECT_NAME}_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 
-ament_target_dependencies(sort_tracker_node PUBLIC
-  rclcpp
-  std_msgs
-  sensor_msgs
-  vision_msgs
-  cv_bridge
-  message_filters
-  sort_backend
-)
+ament_target_dependencies(${PROJECT_NAME}_node
+  PUBLIC
+    rclcpp
+    std_msgs
+    sensor_msgs
+    vision_msgs
+    cv_bridge
+    message_filters
+    sort_backend)
 
-target_link_libraries(sort_tracker_node PUBLIC
-  Eigen3::Eigen
-)
+target_link_libraries(${PROJECT_NAME}_node
+  PUBLIC
+    Eigen3::Eigen)
 
-target_compile_features(sort_tracker_node PUBLIC cxx_std_17)  # Require C++17
+target_compile_features(${PROJECT_NAME}_node PUBLIC cxx_std_17)  # Require C++17
 
-install(TARGETS sort_tracker_node
+target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
+
+install(TARGETS ${PROJECT_NAME}_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch
