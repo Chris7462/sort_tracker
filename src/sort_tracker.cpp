@@ -3,16 +3,20 @@
 #include <chrono>
 #include <functional>
 #include <exception>
+#include <cmath>
 
 // OpenCV header
 #include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
 
 // ROS header
 #include <cv_bridge/cv_bridge.hpp>
 
+// Eigen header
+#include <Eigen/Dense>
+
 // local header
 #include "sort_tracker/sort_tracker.hpp"
-// #include "sort_backend/tracking_utils.hpp" // placeholder
 
 
 namespace sort_tracker
@@ -112,19 +116,15 @@ bool SortTracker::initialize_parameters()
 bool SortTracker::initialize_tracker()
 {
   try {
-    // TODO: Initialize SORT tracking backend
-    // tracker_config_.max_age = max_age_;
-    // tracker_config_.min_hits = min_hits_;
-    // tracker_config_.iou_threshold = iou_threshold_;
-    //
-    // tracker_backend_ = std::make_shared<sort_backend::SortTrackerBackend>(tracker_config_);
-    //
-    // if (!tracker_backend_) {
-    //   RCLCPP_ERROR(get_logger(), "Failed to create SORT tracker backend instance");
-    //   return false;
-    // }
+    // Initialize SORT tracking backend with parameters
+    tracker_backend_ = std::make_shared<sort::Sort>(max_age_, min_hits_, iou_threshold_);
 
-    RCLCPP_INFO(get_logger(), "SORT tracker backend initialized successfully (placeholder)");
+    if (!tracker_backend_) {
+      RCLCPP_ERROR(get_logger(), "Failed to create SORT tracker backend instance");
+      return false;
+    }
+
+    RCLCPP_INFO(get_logger(), "SORT tracker backend initialized successfully");
     return true;
 
   } catch (const std::exception & e) {
@@ -257,22 +257,25 @@ void SortTracker::timer_callback()
       return;
     }
 
-    // TODO: Process detections with SORT tracker
-    // Convert vision_msgs::Detection2DArray to tracker input format
-    // auto tracking_results = tracker_backend_->update(converted_detections);
+    // Convert detections to SORT format
+    Eigen::MatrixXf detection_matrix = convert_detections_to_sort_format(synced_data.detections);
 
-    // For now, create placeholder tracking result (just copy the original image)
+    // Process detections with SORT tracker
+    Eigen::MatrixXf tracking_results = tracker_backend_->update(detection_matrix);
+
+    // Create result image (copy original)
     cv::Mat tracking_result_image = cv_ptr->image.clone();
 
-    // TODO: Draw tracking results (bounding boxes with track IDs)
-    // tracking_result_image = sort_backend::utils::draw_tracking_results(
-    //   cv_ptr->image, tracking_results, detection_confidence_threshold_);
+    // Draw tracking results if any tracks exist
+    if (tracking_results.rows() > 0) {
+      draw_tracking_results(tracking_result_image, tracking_results);
+    }
 
     // Publish tracking result image
     publish_tracking_result_image(tracking_result_image, synced_data.image->header);
 
-    RCLCPP_DEBUG(get_logger(), "Processed tracking frame with %ld detections",
-      synced_data.detections->detections.size());
+    RCLCPP_DEBUG(get_logger(), "Processed tracking frame with %ld detections -> %ld tracks",
+      synced_data.detections->detections.size(), tracking_results.rows());
 
   } catch (const cv_bridge::Exception & e) {
     RCLCPP_ERROR(get_logger(), "cv_bridge exception: %s", e.what());
@@ -282,6 +285,114 @@ void SortTracker::timer_callback()
 
   // Clear processing flag
   processing_in_progress_.store(false);
+}
+
+Eigen::MatrixXf SortTracker::convert_detections_to_sort_format(
+  const vision_msgs::msg::Detection2DArray::SharedPtr detection_msg)
+{
+  const auto & detections = detection_msg->detections;
+
+  if (detections.empty()) {
+    // Return empty matrix for SORT (0 rows, 5 columns)
+    return Eigen::MatrixXf::Zero(0, 5);
+  }
+
+  // Create matrix for SORT input: [x1, y1, x2, y2, score]
+  Eigen::MatrixXf detection_matrix(detections.size(), 5);
+
+  for (size_t i = 0; i < detections.size(); ++i) {
+    const auto & detection = detections[i];
+    const auto & bbox = detection.bbox;
+
+    // Extract bounding box parameters
+    float center_x = bbox.center.position.x;
+    float center_y = bbox.center.position.y;
+    float size_x = bbox.size_x;
+    float size_y = bbox.size_y;
+
+    // Convert from center+size to corner coordinates
+    float x1 = center_x - size_x / 2.0f;
+    float y1 = center_y - size_y / 2.0f;
+    float x2 = center_x + size_x / 2.0f;
+    float y2 = center_y + size_y / 2.0f;
+
+    // Get confidence score (use first hypothesis if available)
+    float score = 1.0f; // default score
+    if (!detection.results.empty()) {
+      score = static_cast<float>(detection.results[0].hypothesis.score);
+    }
+
+    // Fill matrix row
+    detection_matrix(i, 0) = x1;
+    detection_matrix(i, 1) = y1;
+    detection_matrix(i, 2) = x2;
+    detection_matrix(i, 3) = y2;
+    detection_matrix(i, 4) = score;
+  }
+
+  return detection_matrix;
+}
+
+void SortTracker::draw_tracking_results(cv::Mat & image, const Eigen::MatrixXf & tracking_results)
+{
+  for (int i = 0; i < tracking_results.rows(); ++i) {
+    // Extract tracking result: [x1, y1, x2, y2, track_id]
+    int x1 = static_cast<int>(tracking_results(i, 0));
+    int y1 = static_cast<int>(tracking_results(i, 1));
+    int x2 = static_cast<int>(tracking_results(i, 2));
+    int y2 = static_cast<int>(tracking_results(i, 3));
+    int track_id = static_cast<int>(tracking_results(i, 4));
+
+    // Get consistent color for this track
+    cv::Scalar box_color = get_track_color(track_id);
+
+    // Draw bounding box
+    cv::rectangle(image, cv::Point(x1, y1), cv::Point(x2, y2), box_color, 2);
+
+    // Prepare track ID text
+    std::string track_text = "ID:" + std::to_string(track_id);
+
+    // Calculate text size and position
+    int font_face = cv::FONT_HERSHEY_SIMPLEX;
+    double font_scale = 0.55;
+    int thickness = 1.8;
+    int baseline = 0;
+
+    cv::Size text_size = cv::getTextSize(track_text, font_face, font_scale, thickness, &baseline);
+
+    // Draw background rectangle for text (same color as box)
+    cv::rectangle(image,
+      cv::Point(x1, y1 - text_size.height - 4),
+      cv::Point(x1 + text_size.width, y1),
+      box_color, -1);
+
+    // Choose text color based on background brightness
+    // Use white text on dark backgrounds, black text on light backgrounds
+    cv::Vec3b color_bgr = cv::Vec3b(box_color[0], box_color[1], box_color[2]);
+    int brightness = (color_bgr[2] + color_bgr[1] + color_bgr[0]) / 3; // R+G+B/3
+    cv::Scalar text_color = brightness < 128 ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 0, 0);
+
+    // Draw text
+    cv::putText(image, track_text, cv::Point(x1, y1 - 4),
+      font_face, font_scale, text_color, thickness);
+  }
+}
+
+cv::Scalar SortTracker::get_track_color(int track_id)
+{
+  // Generate consistent color based on track ID using HSV color space
+  // Use golden ratio for better color distribution
+  const float golden_ratio = 0.618033988749895f;
+  float hue = std::fmod(track_id * golden_ratio, 1.0f) * 360.0f;
+
+  // Convert HSV to BGR (OpenCV format)
+  // Fixed saturation and value for bright, distinguishable colors
+  cv::Mat hsv_color(1, 1, CV_8UC3, cv::Scalar(hue / 2.0f, 255, 255)); // OpenCV hue is 0-180
+  cv::Mat bgr_color;
+  cv::cvtColor(hsv_color, bgr_color, cv::COLOR_HSV2BGR);
+
+  cv::Vec3b bgr_pixel = bgr_color.at<cv::Vec3b>(0, 0);
+  return cv::Scalar(bgr_pixel[0], bgr_pixel[1], bgr_pixel[2]);
 }
 
 void SortTracker::publish_tracking_result_image(

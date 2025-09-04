@@ -20,9 +20,8 @@
 // OpenCV header
 #include <opencv2/core.hpp>
 
-// local header (placeholder - will be replaced with actual sort backend)
-// #include "sort_trt_backend/sort_types.hpp"
-// #include "sort_trt_backend/sort_tracker_backend.hpp"
+// SORT backend headers
+#include "sort_backend/sort.hpp"
 
 
 namespace sort_tracker
@@ -75,6 +74,28 @@ private:
   void timer_callback();
 
   /**
+   * @brief Convert ROS detection message to SORT input format
+   * @param detection_msg ROS detection array message
+   * @return Eigen matrix in format [x1, y1, x2, y2, score] for each detection
+   */
+  Eigen::MatrixXf convert_detections_to_sort_format(
+    const vision_msgs::msg::Detection2DArray::SharedPtr detection_msg);
+
+  /**
+   * @brief Draw tracking results on image with bounding boxes and track IDs
+   * @param image OpenCV image to draw on
+   * @param tracking_results SORT output matrix [x1, y1, x2, y2, track_id]
+   */
+  void draw_tracking_results(cv::Mat & image, const Eigen::MatrixXf & tracking_results);
+
+  /**
+   * @brief Generate consistent color for a track ID
+   * @param track_id Track identifier
+   * @return OpenCV Scalar color (BGR format)
+   */
+  cv::Scalar get_track_color(int track_id);
+
+  /**
    * @brief Publish tracking result image with bounding boxes and track IDs
    * @param result_image Tracking result as OpenCV Mat
    * @param header Original message header for timestamp consistency
@@ -108,8 +129,8 @@ private:
   rclcpp::CallbackGroup::SharedPtr sync_callback_group_;
   rclcpp::CallbackGroup::SharedPtr timer_callback_group_;
 
-  // SORT tracker backend (placeholder)
-  // std::shared_ptr<sort_backend::SortTrackerBackend> tracker_backend_;
+  // SORT tracker backend
+  std::shared_ptr<sort::Sort> tracker_backend_;
 
   // ROS2 parameters
   std::string image_input_topic_;
@@ -120,10 +141,7 @@ private:
   int max_processing_queue_size_;
   int sync_queue_size_;
 
-  // SORT tracker configuration (placeholder)
-  // sort_backend::SortTrackerBackend::Config tracker_config_;
-
-  // Tracking parameters
+  // SORT tracker parameters
   int max_age_;
   int min_hits_;
   float iou_threshold_;

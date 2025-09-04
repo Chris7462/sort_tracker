@@ -10,6 +10,6 @@ sort_tracker_node:
     max_processing_queue_size: 5  # Maximum number of queue
 
     # sort backend parameters
-    max_age: 1
+    max_age: 5  # default is 1 in the paper for CV model
     min_hits: 3
     iou_threshold: 0.3
