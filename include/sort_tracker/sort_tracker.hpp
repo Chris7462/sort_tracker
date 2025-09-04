@@ -106,7 +106,8 @@ private:
 
 private:
   // Synchronized data structure
-  struct SyncedData {
+  struct SyncedData
+  {
     sensor_msgs::msg::Image::SharedPtr image;
     vision_msgs::msg::Detection2DArray::SharedPtr detections;
     rclcpp::Time sync_timestamp;
@@ -118,8 +119,7 @@ private:
 
   // ExactTime synchronizer
   std::shared_ptr<message_filters::TimeSynchronizer<
-    sensor_msgs::msg::Image,
-    vision_msgs::msg::Detection2DArray>> sync_;
+      sensor_msgs::msg::Image, vision_msgs::msg::Detection2DArray>> sync_;
 
   // ROS2 publisher
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr tracker_pub_;

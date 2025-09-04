@@ -82,9 +82,10 @@ bool SortTracker::initialize_parameters()
     }
 
     // Detection confidence threshold parameter
-    detection_confidence_threshold_ = declare_parameter<float>("detection_confidence_threshold", 0.5f);
+    detection_confidence_threshold_ =
+      declare_parameter<float>("detection_confidence_threshold", 0.5f);
     if (detection_confidence_threshold_ < 0.0f || detection_confidence_threshold_ > 1.0f) {
-      RCLCPP_ERROR(get_logger(), 
+      RCLCPP_ERROR(get_logger(),
         "Invalid detection confidence threshold: %.3f (should be 0.0 <= threshold <= 1.0)",
         detection_confidence_threshold_);
       return false;
@@ -111,7 +112,8 @@ bool SortTracker::initialize_parameters()
     RCLCPP_INFO(get_logger(), "Input topics: %s, %s",
       image_input_topic_.c_str(), detection_input_topic_.c_str());
     RCLCPP_INFO(get_logger(), "Output topic: %s", tracking_output_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "Detection confidence threshold: %.3f", detection_confidence_threshold_);
+    RCLCPP_INFO(get_logger(), "Detection confidence threshold: %.3f",
+      detection_confidence_threshold_);
     RCLCPP_INFO(get_logger(), "SORT config: max_age=%d, min_hits=%d, iou_thresh=%.3f",
       max_age_, min_hits_, iou_threshold_);
 
@@ -168,8 +170,8 @@ void SortTracker::initialize_ros_components()
 
   // Create ExactTime synchronizer
   sync_ = std::make_shared<message_filters::TimeSynchronizer<
-    sensor_msgs::msg::Image,
-    vision_msgs::msg::Detection2DArray>>(image_sub_, detection_sub_, sync_queue_size_);
+        sensor_msgs::msg::Image, vision_msgs::msg::Detection2DArray>>(
+      image_sub_, detection_sub_, sync_queue_size_);
 
   // Register synchronized callback
   sync_->registerCallback(&SortTracker::synchronized_callback, this);
@@ -316,7 +318,7 @@ Eigen::MatrixXf SortTracker::convert_detections_to_sort_format(
     // Get confidence score (iterate through all hypotheses and pick the highest)
     float score = 0.0f; // default: no confidence if no data available
     if (!detection.results.empty()) {
-      for (const auto& result : detection.results) {
+      for (const auto & result : detection.results) {
         score = std::max(score, static_cast<float>(result.hypothesis.score));
       }
     }
@@ -348,7 +350,7 @@ Eigen::MatrixXf SortTracker::convert_detections_to_sort_format(
     // Get confidence score (iterate through all hypotheses and pick the highest)
     float score = 0.0f; // default: no confidence if no data available
     if (!detection.results.empty()) {
-      for (const auto& result : detection.results) {
+      for (const auto & result : detection.results) {
         score = std::max(score, static_cast<float>(result.hypothesis.score));
       }
     }
