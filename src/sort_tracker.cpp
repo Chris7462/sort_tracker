@@ -223,8 +223,9 @@ void SortTracker::synchronized_callback(
 
 void SortTracker::timer_callback()
 {
-  // Skip if already processing
-  if (processing_in_progress_.load()) {
+  // Atomically claim the "processing" slot
+  bool expected = false;
+  if (!processing_in_progress_.compare_exchange_strong(expected, true)) {
     return;
   }
 
@@ -252,11 +253,9 @@ void SortTracker::timer_callback()
   }
 
   if (!has_data) {
+    processing_in_progress_.store(false);
     return; // No data to process
   }
-
-  // Set processing flag
-  processing_in_progress_.store(true);
 
   try {
     // Convert ROS image to OpenCV format
