@@ -162,16 +162,14 @@ void SortTracker::initialize_ros_components()
   sub_options.callback_group = sync_callback_group_;
 
   // Create message filter subscribers
-  image_sub_.subscribe(this, image_input_topic_,
-    image_qos.get_rmw_qos_profile(), sub_options);
+  image_sub_.subscribe(this, image_input_topic_, image_qos, sub_options);
 
-  detection_sub_.subscribe(this, detection_input_topic_,
-    image_qos.get_rmw_qos_profile(), sub_options);
+  detection_sub_.subscribe(this, detection_input_topic_, image_qos, sub_options);
 
-  // Create ExactTime synchronizer
+  // Create ExactTime synchronizer (queue_size first, then subscribers)
   sync_ = std::make_shared<message_filters::TimeSynchronizer<
         sensor_msgs::msg::Image, vision_msgs::msg::Detection2DArray>>(
-      image_sub_, detection_sub_, sync_queue_size_);
+      sync_queue_size_, image_sub_, detection_sub_);
 
   // Register synchronized callback
   sync_->registerCallback(&SortTracker::synchronized_callback, this);
