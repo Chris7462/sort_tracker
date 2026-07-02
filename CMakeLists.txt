@@ -1,11 +1,13 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.20)
+
 project(sort_tracker
   VERSION 1.0.0
   DESCRIPTION "Modern C++ implementation of Simple Online Realtime Tracking (SORT) using Hungarian Algorithm and Kalman Filter"
   LANGUAGES CXX)
 
-  # Build type
+# Default to a Release build if the user doesn't specify one
 if(NOT CMAKE_BUILD_TYPE)
+  message(STATUS "No build type specified, defaulting to 'Release'.")
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
 endif()
 
@@ -17,35 +19,32 @@ find_package(sensor_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(message_filters REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(sort_backend REQUIRED)
-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 add_executable(${PROJECT_NAME}_node
   src/sort_tracker_node.cpp
   src/sort_tracker.cpp)
 
-target_include_directories(${PROJECT_NAME}_node
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+target_include_directories(${PROJECT_NAME}_node PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-ament_target_dependencies(${PROJECT_NAME}_node
-  PUBLIC
-    rclcpp
-    std_msgs
-    sensor_msgs
-    vision_msgs
-    cv_bridge
-    message_filters
-    sort_backend)
+target_link_libraries(${PROJECT_NAME}_node PRIVATE
+  ${rclcpp_TARGETS}
+  ${std_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+  ${vision_msgs_TARGETS}
+  ${cv_bridge_TARGETS}
+  ${message_filters_TARGETS}
+  ${sort_backend_TARGETS}
+  Eigen3::Eigen)
 
-target_link_libraries(${PROJECT_NAME}_node
-  PUBLIC
-    Eigen3::Eigen)
+target_compile_features(${PROJECT_NAME}_node PRIVATE cxx_std_17)  # Require C++17
 
-target_compile_features(${PROJECT_NAME}_node PUBLIC cxx_std_17)  # Require C++17
-
-target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(${PROJECT_NAME}_node PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic)
 
 install(TARGETS ${PROJECT_NAME}_node
   DESTINATION lib/${PROJECT_NAME})
@@ -53,7 +52,10 @@ install(TARGETS ${PROJECT_NAME}_node
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})
 
-install(DIRECTORY params
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME})
+
+install(DIRECTORY param
   DESTINATION share/${PROJECT_NAME})
 
 install(DIRECTORY rviz

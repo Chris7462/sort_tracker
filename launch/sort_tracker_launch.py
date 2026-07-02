@@ -16,7 +16,7 @@ def generate_launch_description():
     )
 
     params = join(
-        get_package_share_directory('sort_tracker'), 'params',
+        get_package_share_directory('sort_tracker'), 'param',
         'sort_tracker.yaml'
     )
 

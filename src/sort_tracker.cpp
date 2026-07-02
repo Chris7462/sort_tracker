@@ -162,16 +162,14 @@ void SortTracker::initialize_ros_components()
   sub_options.callback_group = sync_callback_group_;
 
   // Create message filter subscribers
-  image_sub_.subscribe(this, image_input_topic_,
-    image_qos.get_rmw_qos_profile(), sub_options);
+  image_sub_.subscribe(this, image_input_topic_, image_qos, sub_options);
 
-  detection_sub_.subscribe(this, detection_input_topic_,
-    image_qos.get_rmw_qos_profile(), sub_options);
+  detection_sub_.subscribe(this, detection_input_topic_, image_qos, sub_options);
 
-  // Create ExactTime synchronizer
+  // Create ExactTime synchronizer (queue_size first, then subscribers)
   sync_ = std::make_shared<message_filters::TimeSynchronizer<
         sensor_msgs::msg::Image, vision_msgs::msg::Detection2DArray>>(
-      image_sub_, detection_sub_, sync_queue_size_);
+      sync_queue_size_, image_sub_, detection_sub_);
 
   // Register synchronized callback
   sync_->registerCallback(&SortTracker::synchronized_callback, this);
@@ -223,8 +221,9 @@ void SortTracker::synchronized_callback(
 
 void SortTracker::timer_callback()
 {
-  // Skip if already processing
-  if (processing_in_progress_.load()) {
+  // Atomically claim the "processing" slot
+  bool expected = false;
+  if (!processing_in_progress_.compare_exchange_strong(expected, true)) {
     return;
   }
 
@@ -235,6 +234,7 @@ void SortTracker::timer_callback()
     while (!sync_buff_.empty()) {
       sync_buff_.pop();
     }
+    processing_in_progress_.store(false);
     return;
   }
 
@@ -252,11 +252,9 @@ void SortTracker::timer_callback()
   }
 
   if (!has_data) {
+    processing_in_progress_.store(false);
     return; // No data to process
   }
-
-  // Set processing flag
-  processing_in_progress_.store(true);
 
   try {
     // Convert ROS image to OpenCV format

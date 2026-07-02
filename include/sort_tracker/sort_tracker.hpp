@@ -14,8 +14,8 @@
 #include <vision_msgs/msg/detection2_d_array.hpp>
 
 // Message filters header
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
+#include <message_filters/subscriber.hpp>
+#include <message_filters/time_synchronizer.hpp>
 
 // OpenCV header
 #include <opencv2/core.hpp>
