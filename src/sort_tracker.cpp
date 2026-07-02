@@ -234,6 +234,7 @@ void SortTracker::timer_callback()
     while (!sync_buff_.empty()) {
       sync_buff_.pop();
     }
+    processing_in_progress_.store(false);
     return;
   }
 
