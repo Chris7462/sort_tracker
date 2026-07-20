@@ -33,7 +33,8 @@ def generate_launch_description():
                  'launch', 'fcos_object_detection_launch.py')
         ),
         launch_arguments={
-            'use_sim_time': LaunchConfiguration('use_sim_time')
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'input_topic': 'kitti/camera/color/left/image_raw',
         }.items()
     )
 
@@ -44,6 +45,19 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': LaunchConfiguration('use_sim_time')
         }.items()
+    )
+
+    viz_params = join(pkg_share, 'param', 'sort_tracker_viz.yaml')
+
+    sort_tracker_viz_node = Node(
+        package='sort_tracker',
+        executable='sort_tracker_viz_node',
+        name='sort_tracker_viz_node',
+        output='screen',
+        parameters=[
+            viz_params,
+            {'use_sim_time': LaunchConfiguration('use_sim_time')}
+        ]
     )
 
     rviz_node = Node(
@@ -57,6 +71,7 @@ def generate_launch_description():
         declare_use_sim_time,
         fcos_object_detection_launch,
         sort_tracker_launch,
+        sort_tracker_viz_node,
         rviz_node,
         TimerAction(
             period=3.0,  # delay these nodes for 3.0 seconds.

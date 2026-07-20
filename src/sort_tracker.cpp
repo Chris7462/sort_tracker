@@ -3,17 +3,6 @@
 #include <chrono>
 #include <functional>
 #include <exception>
-#include <cmath>
-
-// OpenCV header
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
-
-// ROS header
-#include <cv_bridge/cv_bridge.hpp>
-
-// Eigen header
-#include <Eigen/Dense>
 
 // local header
 #include "sort_tracker/sort_tracker.hpp"
@@ -23,8 +12,7 @@ namespace sort_tracker
 {
 
 SortTracker::SortTracker()
-: Node("sort_tracker_node"),
-  processing_in_progress_(false)
+: Node("sort_tracker_node"), processing_in_progress_(false)
 {
   // Initialize ROS2 parameters with validation
   if (!initialize_parameters()) {
@@ -40,7 +28,7 @@ SortTracker::SortTracker()
     return;
   }
 
-  // Initialize ROS2 components with message filters
+  // Initialize ROS2 components
   initialize_ros_components();
 
   RCLCPP_INFO(get_logger(),
@@ -57,15 +45,12 @@ bool SortTracker::initialize_parameters()
 {
   try {
     // ROS2 topic parameters
-    image_input_topic_ = declare_parameter("image_input_topic",
-      std::string("kitti/camera/color/left/image_raw"));
     detection_input_topic_ = declare_parameter("detection_input_topic",
       std::string("fcos_object_detection/detection_array"));
     tracking_output_topic_ = declare_parameter("tracking_output_topic",
-      std::string("sort_tracker/image"));
+      std::string("sort_tracker/tracks"));
 
     queue_size_ = declare_parameter<int>("queue_size", 10);
-    sync_queue_size_ = declare_parameter<int>("sync_queue_size", 10);
 
     processing_frequency_ = declare_parameter<double>("processing_frequency", 50.0);
     if (processing_frequency_ <= 0) {
@@ -94,14 +79,13 @@ bool SortTracker::initialize_parameters()
     // SORT tracker parameters
     max_age_ = declare_parameter<int>("max_age", 30);
     min_hits_ = declare_parameter<int>("min_hits", 3);
-    iou_threshold_ = declare_parameter<float>("iou_threshold", 0.3f);
-
     if (max_age_ <= 0 || min_hits_ <= 0) {
       RCLCPP_ERROR(get_logger(), "Invalid SORT parameters: max_age=%d, min_hits=%d",
         max_age_, min_hits_);
       return false;
     }
 
+    iou_threshold_ = declare_parameter<float>("iou_threshold", 0.3f);
     if (iou_threshold_ <= 0.0f || iou_threshold_ >= 1.0f) {
       RCLCPP_ERROR(get_logger(), "Invalid IoU threshold: %.3f (should be 0.0 < iou < 1.0)",
         iou_threshold_);
@@ -109,8 +93,7 @@ bool SortTracker::initialize_parameters()
     }
 
     RCLCPP_INFO(get_logger(), "Parameters initialized successfully");
-    RCLCPP_INFO(get_logger(), "Input topics: %s, %s",
-      image_input_topic_.c_str(), detection_input_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "Input topic: %s", detection_input_topic_.c_str());
     RCLCPP_INFO(get_logger(), "Output topic: %s", tracking_output_topic_.c_str());
     RCLCPP_INFO(get_logger(), "Detection confidence threshold: %.3f",
       detection_confidence_threshold_);
@@ -147,75 +130,69 @@ bool SortTracker::initialize_tracker()
 
 void SortTracker::initialize_ros_components()
 {
-  // Configure QoS profile for reliable image transport
-  rclcpp::QoS image_qos(queue_size_);
-  image_qos.reliability(rclcpp::ReliabilityPolicy::BestEffort);
-  image_qos.durability(rclcpp::DurabilityPolicy::Volatile);
-  image_qos.history(rclcpp::HistoryPolicy::KeepLast);
+  // Configure QoS profile for detection transport
+  rclcpp::QoS detection_qos(queue_size_);
+  detection_qos.reliability(rclcpp::ReliabilityPolicy::BestEffort);
+  detection_qos.durability(rclcpp::DurabilityPolicy::Volatile);
+  detection_qos.history(rclcpp::HistoryPolicy::KeepLast);
 
-  // Create separate callback groups for parallel execution
-  sync_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-  timer_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  // Create a single REENTRANT callback group for all callbacks.
+  // detection_callback only pushes onto a mutex-protected queue (cheap), and
+  // timer_callback does the actual tracking work while guarded by an atomic
+  // processing flag - both are independently thread-safe, so they're free to
+  // run concurrently with each other.
+  callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
-  // Create message filter subscribers with dedicated callback group
+  // Create subscription options with dedicated callback group
   rclcpp::SubscriptionOptions sub_options;
-  sub_options.callback_group = sync_callback_group_;
+  sub_options.callback_group = callback_group_;
 
-  // Create message filter subscribers
-  image_sub_.subscribe(this, image_input_topic_, image_qos, sub_options);
-
-  detection_sub_.subscribe(this, detection_input_topic_, image_qos, sub_options);
-
-  // Create ExactTime synchronizer (queue_size first, then subscribers)
-  sync_ = std::make_shared<message_filters::TimeSynchronizer<
-        sensor_msgs::msg::Image, vision_msgs::msg::Detection2DArray>>(
-      sync_queue_size_, image_sub_, detection_sub_);
-
-  // Register synchronized callback
-  sync_->registerCallback(&SortTracker::synchronized_callback, this);
+  // Create detection subscriber
+  detection_sub_ = create_subscription<vision_msgs::msg::Detection2DArray>(
+    detection_input_topic_, detection_qos,
+    std::bind(&SortTracker::detection_callback, this, std::placeholders::_1),
+    sub_options
+  );
 
   // Create publisher
-  tracker_pub_ = create_publisher<sensor_msgs::msg::Image>(tracking_output_topic_, image_qos);
+  tracker_pub_ = create_publisher<vision_msgs::msg::Detection2DArray>(
+    tracking_output_topic_, detection_qos);
 
   // Create timer for processing at specified frequency
   auto timer_period = std::chrono::duration<double>(1.0 / processing_frequency_);
   timer_ = create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(timer_period),
-    std::bind(&SortTracker::timer_callback, this),
-    timer_callback_group_
+    std::bind(&SortTracker::timer_callback, this), callback_group_
   );
 
-  RCLCPP_INFO(get_logger(), "ROS components initialized with separate callback groups");
-  RCLCPP_INFO(get_logger(), "Processing frequency: %.1f Hz, Sync queue size: %d",
-    processing_frequency_, sync_queue_size_);
+  RCLCPP_INFO(get_logger(), "ROS components initialized with a shared reentrant callback group");
+  RCLCPP_INFO(get_logger(), "Processing frequency: %.1f Hz", processing_frequency_);
 }
 
-void SortTracker::synchronized_callback(
-  const sensor_msgs::msg::Image::SharedPtr image_msg,
-  const vision_msgs::msg::Detection2DArray::SharedPtr detection_msg)
+void SortTracker::detection_callback(
+  vision_msgs::msg::Detection2DArray::ConstSharedPtr detection_msg)
 {
   try {
     // Thread-safe queue management
     std::lock_guard<std::mutex> lock(mtx_);
 
     // Check if queue is full
-    if (sync_buff_.size() >= static_cast<size_t>(max_processing_queue_size_)) {
-      // Remove oldest synchronized data to make room for new one
+    if (detection_buff_.size() >= static_cast<size_t>(max_processing_queue_size_)) {
+      // Remove oldest detection to make room for new one
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-        "Tracking processing queue full, dropping oldest frame (queue size: %ld)",
-        sync_buff_.size());
-      sync_buff_.pop();
+        "Tracking processing queue full, dropping oldest detection (queue size: %ld)",
+        detection_buff_.size());
+      detection_buff_.pop();
     }
 
-    // Add new synchronized data to queue
-    SyncedData synced_data{image_msg, detection_msg, rclcpp::Time(image_msg->header.stamp)};
-    sync_buff_.push(std::move(synced_data));
+    // Add new detection to queue
+    detection_buff_.push(detection_msg);
 
-    RCLCPP_DEBUG(get_logger(), "Synchronized data added to queue. Queue size: %ld",
-      sync_buff_.size());
+    RCLCPP_DEBUG(get_logger(), "Detection added to queue. Queue size: %ld",
+      detection_buff_.size());
 
   } catch (const std::exception & e) {
-    RCLCPP_ERROR(get_logger(), "Exception in synchronized callback: %s", e.what());
+    RCLCPP_ERROR(get_logger(), "Exception in detection callback: %s", e.what());
   }
 }
 
@@ -227,68 +204,38 @@ void SortTracker::timer_callback()
     return;
   }
 
-  // Check if there are subscribers
-  if (tracker_pub_->get_subscription_count() == 0) {
-    // Still consume queue to prevent buildup
-    std::lock_guard<std::mutex> lock(mtx_);
-    while (!sync_buff_.empty()) {
-      sync_buff_.pop();
-    }
-    processing_in_progress_.store(false);
-    return;
-  }
-
-  // Get next synchronized data from queue
-  SyncedData synced_data;
-  bool has_data = false;
+  // Get next detection from queue
+  vision_msgs::msg::Detection2DArray::ConstSharedPtr detection_msg;
 
   {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (!sync_buff_.empty()) {
-      synced_data = std::move(sync_buff_.front());
-      sync_buff_.pop();
-      has_data = true;
-    }
-  }
-
-  if (!has_data) {
-    processing_in_progress_.store(false);
-    return; // No data to process
-  }
-
-  try {
-    // Convert ROS image to OpenCV format
-    cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(
-      synced_data.image, sensor_msgs::image_encodings::BGR8);
-
-    if (!cv_ptr || cv_ptr->image.empty()) {
-      RCLCPP_WARN(get_logger(), "Received empty or invalid image");
+    if (detection_buff_.empty()) {
       processing_in_progress_.store(false);
       return;
     }
+    detection_msg = detection_buff_.front();
+    detection_buff_.pop();
+  }
 
+  try {
     // Convert detections to SORT format
-    Eigen::MatrixXf detection_matrix = convert_detections_to_sort_format(synced_data.detections);
+    Eigen::MatrixXf detection_matrix = convert_detections_to_sort_format(detection_msg);
 
     // Process detections with SORT tracker
     Eigen::MatrixXf tracking_results = tracker_backend_->update(detection_matrix);
 
-    // Create result image (copy original)
-    cv::Mat tracking_result_image = cv_ptr->image.clone();
+    // Convert tracking results back into a ROS detection message
+    if (tracker_pub_->get_subscription_count() > 0) {
+      vision_msgs::msg::Detection2DArray tracked_detections =
+        convert_sort_output_to_detections(tracking_results, detection_msg->header);
 
-    // Draw tracking results if any tracks exist
-    if (tracking_results.rows() > 0) {
-      draw_tracking_results(tracking_result_image, tracking_results);
+      // Publish tracked detections
+      publish_tracked_detections(tracked_detections);
     }
 
-    // Publish tracking result image
-    publish_tracking_result_image(tracking_result_image, synced_data.image->header);
-
     RCLCPP_DEBUG(get_logger(), "Processed tracking frame with %ld detections -> %ld tracks",
-      synced_data.detections->detections.size(), tracking_results.rows());
+      detection_msg->detections.size(), tracking_results.rows());
 
-  } catch (const cv_bridge::Exception & e) {
-    RCLCPP_ERROR(get_logger(), "cv_bridge exception: %s", e.what());
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_logger(), "Exception during tracking processing: %s", e.what());
   }
@@ -298,7 +245,7 @@ void SortTracker::timer_callback()
 }
 
 Eigen::MatrixXf SortTracker::convert_detections_to_sort_format(
-  const vision_msgs::msg::Detection2DArray::SharedPtr detection_msg)
+  vision_msgs::msg::Detection2DArray::ConstSharedPtr detection_msg)
 {
   const auto & detections = detection_msg->detections;
 
@@ -383,87 +330,52 @@ Eigen::MatrixXf SortTracker::convert_detections_to_sort_format(
   return detection_matrix;
 }
 
-void SortTracker::draw_tracking_results(cv::Mat & image, const Eigen::MatrixXf & tracking_results)
-{
-  for (int i = 0; i < tracking_results.rows(); ++i) {
-    // Extract tracking result: [x1, y1, x2, y2, track_id]
-    int x1 = static_cast<int>(tracking_results(i, 0));
-    int y1 = static_cast<int>(tracking_results(i, 1));
-    int x2 = static_cast<int>(tracking_results(i, 2));
-    int y2 = static_cast<int>(tracking_results(i, 3));
-    int track_id = static_cast<int>(tracking_results(i, 4));
-
-    // Get consistent color for this track
-    cv::Scalar box_color = get_track_color(track_id);
-
-    // Draw bounding box
-    cv::rectangle(image, cv::Point(x1, y1), cv::Point(x2, y2), box_color, 2);
-
-    // Prepare track ID text
-    std::string track_text = "ID:" + std::to_string(track_id);
-
-    // Calculate text size and position
-    int font_face = cv::FONT_HERSHEY_SIMPLEX;
-    double font_scale = 0.55;
-    int thickness = 1.8;
-    int baseline = 0;
-
-    cv::Size text_size = cv::getTextSize(track_text, font_face, font_scale, thickness, &baseline);
-
-    // Draw background rectangle for text (same color as box)
-    cv::rectangle(image,
-      cv::Point(x1, y1 - text_size.height - 4),
-      cv::Point(x1 + text_size.width, y1),
-      box_color, -1);
-
-    // Choose text color based on background brightness
-    // Use white text on dark backgrounds, black text on light backgrounds
-    cv::Vec3b color_bgr = cv::Vec3b(box_color[0], box_color[1], box_color[2]);
-    int brightness = (color_bgr[2] + color_bgr[1] + color_bgr[0]) / 3; // R+G+B/3
-    cv::Scalar text_color = brightness < 128 ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 0, 0);
-
-    // Draw text
-    cv::putText(image, track_text, cv::Point(x1, y1 - 4),
-      font_face, font_scale, text_color, thickness);
-  }
-}
-
-cv::Scalar SortTracker::get_track_color(int track_id)
-{
-  // Generate consistent color based on track ID using HSV color space
-  // Use golden ratio for better color distribution
-  const float golden_ratio = 0.618033988749895f;
-  float hue = std::fmod(track_id * golden_ratio, 1.0f) * 360.0f;
-
-  // Convert HSV to BGR (OpenCV format)
-  // Fixed saturation and value for bright, distinguishable colors
-  cv::Mat hsv_color(1, 1, CV_8UC3, cv::Scalar(hue / 2.0f, 255, 255)); // OpenCV hue is 0-180
-  cv::Mat bgr_color;
-  cv::cvtColor(hsv_color, bgr_color, cv::COLOR_HSV2BGR);
-
-  cv::Vec3b bgr_pixel = bgr_color.at<cv::Vec3b>(0, 0);
-  return cv::Scalar(bgr_pixel[0], bgr_pixel[1], bgr_pixel[2]);
-}
-
-void SortTracker::publish_tracking_result_image(
-  const cv::Mat & result_image,
+vision_msgs::msg::Detection2DArray SortTracker::convert_sort_output_to_detections(
+  const Eigen::MatrixXf & tracking_results,
   const std_msgs::msg::Header & header)
 {
+  vision_msgs::msg::Detection2DArray tracked_detections;
+  tracked_detections.header = header;
+  tracked_detections.detections.reserve(static_cast<size_t>(tracking_results.rows()));
+
+  for (int i = 0; i < tracking_results.rows(); ++i) {
+    // Extract tracking result: [x1, y1, x2, y2, track_id]
+    float x1 = tracking_results(i, 0);
+    float y1 = tracking_results(i, 1);
+    float x2 = tracking_results(i, 2);
+    float y2 = tracking_results(i, 3);
+    int track_id = static_cast<int>(tracking_results(i, 4));
+
+    vision_msgs::msg::Detection2D detection;
+    detection.header = header;
+
+    // ID used for consistency across multiple detection messages, per the
+    // field's documented purpose in vision_msgs - exactly what a track id is.
+    detection.id = std::to_string(track_id);
+
+    // Convert corner coordinates back to center+size format
+    detection.bbox.center.position.x = (x1 + x2) / 2.0;
+    detection.bbox.center.position.y = (y1 + y2) / 2.0;
+    detection.bbox.size_x = x2 - x1;
+    detection.bbox.size_y = y2 - y1;
+
+    tracked_detections.detections.push_back(std::move(detection));
+  }
+
+  return tracked_detections;
+}
+
+void SortTracker::publish_tracked_detections(
+  const vision_msgs::msg::Detection2DArray & tracked_detections)
+{
   try {
-    // Convert OpenCV image back to ROS message
-    cv_bridge::CvImage cv_image;
-    cv_image.header = header;
-    cv_image.encoding = sensor_msgs::image_encodings::BGR8;
-    cv_image.image = result_image;
+    tracker_pub_->publish(tracked_detections);
 
-    // Publish the result
-    auto output_msg = cv_image.toImageMsg();
-    tracker_pub_->publish(*output_msg);
-
-    RCLCPP_DEBUG(get_logger(), "Published tracking result image");
+    RCLCPP_DEBUG(get_logger(), "Published %ld tracked detections",
+      tracked_detections.detections.size());
 
   } catch (const std::exception & e) {
-    RCLCPP_ERROR(get_logger(), "Exception during result publishing: %s", e.what());
+    RCLCPP_ERROR(get_logger(), "Exception during tracked detections publishing: %s", e.what());
   }
 }
 

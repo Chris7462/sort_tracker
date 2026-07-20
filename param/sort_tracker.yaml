@@ -1,13 +1,11 @@
 sort_tracker_node:
   ros__parameters:
-    # ROS parameters for the FCOS object detection node
-    image_input_topic: "kitti/camera/color/left/image_raw"
+    # ROS parameters for the tracking-only sort_tracker node
     detection_input_topic: "fcos_object_detection/detection_array"
-    tracking_output_topic: "sort_tracker/image"
+    tracking_output_topic: "sort_tracker/tracks"
     queue_size: 10  # QoS parameter
-    sync_queue_size: 10  # size for data queue
     processing_frequency: 50.0  # Hz
-    max_processing_queue_size: 5  # Maximum number of queue
+    max_processing_queue_size: 5  # Maximum number of queued detection messages
 
     # sort backend parameters
     max_age: 5  # default is 1 in the paper for CV model

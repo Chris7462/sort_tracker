@@ -32,10 +32,7 @@ target_include_directories(${PROJECT_NAME}_node PRIVATE
 target_link_libraries(${PROJECT_NAME}_node PRIVATE
   ${rclcpp_TARGETS}
   ${std_msgs_TARGETS}
-  ${sensor_msgs_TARGETS}
   ${vision_msgs_TARGETS}
-  ${cv_bridge_TARGETS}
-  ${message_filters_TARGETS}
   ${sort_backend_TARGETS}
   Eigen3::Eigen)
 
@@ -46,7 +43,29 @@ target_compile_options(${PROJECT_NAME}_node PRIVATE
   -Wextra
   -Wpedantic)
 
-install(TARGETS ${PROJECT_NAME}_node
+add_executable(${PROJECT_NAME}_viz_node
+  src/sort_tracker_viz_node.cpp
+  src/sort_tracker_viz.cpp)
+
+target_include_directories(${PROJECT_NAME}_viz_node PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+target_link_libraries(${PROJECT_NAME}_viz_node PRIVATE
+  ${rclcpp_TARGETS}
+  ${std_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+  ${vision_msgs_TARGETS}
+  ${cv_bridge_TARGETS}
+  ${message_filters_TARGETS})
+
+target_compile_features(${PROJECT_NAME}_viz_node PRIVATE cxx_std_17)  # Require C++17
+
+target_compile_options(${PROJECT_NAME}_viz_node PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic)
+
+install(TARGETS ${PROJECT_NAME}_node ${PROJECT_NAME}_viz_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch
