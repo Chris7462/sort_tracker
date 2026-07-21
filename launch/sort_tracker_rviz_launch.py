@@ -3,8 +3,7 @@ from os.path import join
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
-                            IncludeLaunchDescription, TimerAction)
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -12,29 +11,32 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('sort_tracker')
+    fcos_pkg_share = get_package_share_directory('fcos_object_detection')
 
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time',
-        default_value='true',
-        description='Use simulation (bagfile) clock if true'
+        default_value='false',
+        description='Use simulation (bagfile/CARLA) clock if true'
     )
 
-    bag_exec = ExecuteProcess(
-        cmd=['ros2', 'bag', 'play', '-r', '1.0',
-             '/data/kitti/raw/2011_09_29_drive_0071_sync_bag',
-             '--clock',
-             '--qos-profile-overrides-path',
-             join(pkg_share, 'config', 'qos_override_offline.yaml')]
+    declare_image_input_topic = DeclareLaunchArgument(
+        'image_input_topic',
+        description='Input image topic name. Required - no default, since '
+                     'it differs per data source '
+                     '(e.g. /kitti/camera/color/left/image_raw or '
+                     '/carla/hero/cam2/image). Passed through to both the '
+                     'fcos_object_detection node and sort_tracker_viz_node, '
+                     'each of which will refuse to start if this is not '
+                     'provided.'
     )
 
     fcos_object_detection_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            join(get_package_share_directory('fcos_object_detection'),
-                 'launch', 'fcos_object_detection_launch.py')
+            join(fcos_pkg_share, 'launch', 'fcos_object_detection_launch.py')
         ),
         launch_arguments={
             'use_sim_time': LaunchConfiguration('use_sim_time'),
-            'input_topic': 'kitti/camera/color/left/image_raw',
+            'input_topic': LaunchConfiguration('image_input_topic'),
         }.items()
     )
 
@@ -56,7 +58,10 @@ def generate_launch_description():
         output='screen',
         parameters=[
             viz_params,
-            {'use_sim_time': LaunchConfiguration('use_sim_time')}
+            {
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+                'image_input_topic': LaunchConfiguration('image_input_topic'),
+            }
         ]
     )
 
@@ -69,14 +74,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         declare_use_sim_time,
+        declare_image_input_topic,
         fcos_object_detection_launch,
         sort_tracker_launch,
         sort_tracker_viz_node,
         rviz_node,
-        TimerAction(
-            period=3.0,  # delay these nodes for 3.0 seconds.
-            actions=[
-                bag_exec
-            ]
-        )
     ])

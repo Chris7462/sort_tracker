@@ -42,8 +42,15 @@ bool SortTrackerViz::initialize_parameters()
 {
   try {
     // ROS2 topic parameters
-    image_input_topic_ = declare_parameter("image_input_topic",
-      std::string("kitti/camera/color/left/image_raw"));
+    image_input_topic_ = declare_parameter("image_input_topic", std::string(""));
+    if (image_input_topic_.empty()) {
+      RCLCPP_ERROR(get_logger(),
+        "image_input_topic is empty. This must be remapped by the launch file "
+        "(e.g. image_input_topic:=/carla/hero/cam2/image) - refusing to start "
+        "with an unspecified input source.");
+      return false;
+    }
+
     tracked_detections_input_topic_ = declare_parameter("tracked_detections_input_topic",
       std::string("sort_tracker/tracks"));
     annotated_image_output_topic_ = declare_parameter("annotated_image_output_topic",

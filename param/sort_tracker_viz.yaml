@@ -1,7 +1,11 @@
 sort_tracker_viz_node:
   ros__parameters:
     # ROS parameters for the SORT tracker visualization node
-    image_input_topic: "kitti/camera/color/left/image_raw"
+    # NOTE: image_input_topic is intentionally NOT set here. It has no safe
+    # default since it differs per data source (KITTI bag, CARLA simulator,
+    # live sensors, ...). It MUST be remapped via the launch file
+    # (e.g. image_input_topic:=/carla/hero/cam2/image), or the node will
+    # refuse to start.
     tracked_detections_input_topic: "sort_tracker/tracks"
     annotated_image_output_topic: "sort_tracker/image"
     queue_size: 10  # QoS parameter
